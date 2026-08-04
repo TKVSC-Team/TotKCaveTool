@@ -1,6 +1,8 @@
 # TotkCaveTool (CLI Application)
 
-`TotkCaveTool` is a standalone command-line application built on top of the [`TotkCave`](../TotkCave) library for inspecting, converting, and batch exporting *Tears of the Kingdom* cave (`cave017`) and Depths terrain (`.quad`) streaming files.
+`TotkCaveTool` is a standalone command-line application built on top of the [`TotkCave`](https://www.nuget.org/packages/TotkCave) library for inspecting, converting, and batch exporting *Tears of the Kingdom* cave (`cave017`) and Depths terrain (`.quad`) streaming files.
+
+Bundles a prebuilt `mc_decompress.exe` (MeshCodec) so it works out of the box - see [MeshCodec.md](MeshCodec.md).
 
 ---
 
@@ -17,7 +19,7 @@ dotnet build TotkCaveTool.sln -c Release
 
 ## Commands
 
-### 1. `info` — Inspect Cave Metadata
+### 1. `info` - Inspect Cave Metadata
 Displays cave ID, world matrix base origin, cell sidelength, subdivision LOD depth, bounding box (AABB), and node/stream counts.
 
 ```bash
@@ -31,7 +33,7 @@ dotnet run -- info Cave_Akkala_0000
 
 ---
 
-### 2. `export` — Export Single Cave to OBJ
+### 2. `export` - Export Single Cave to OBJ
 Reconstructs the 3D surface mesh for a cave folder and writes Wavefront `.obj` (and optional `.mtl`) files.
 
 ```bash
@@ -48,7 +50,7 @@ dotnet run -- export <cave_dir> [-o <out.obj>] [--materials] [--mc <path>] [--lo
 
 ---
 
-### 3. `batch` — Batch Export All Caves in Directory
+### 3. `batch` - Batch Export All Caves in Directory
 Recursively scans a directory tree for folders containing `C.crbin` files and exports them to `.obj` format in parallel.
 
 ```bash
@@ -69,7 +71,7 @@ dotnet run -- batch /path/to/romfs/cave017 -o exported_caves --materials -j 8
 
 ---
 
-### 4. `depths` — Export Depths Quad Mesh
+### 4. `depths` - Export Depths Quad Mesh
 Reconstructs Depths quad terrain geometry from a Depths `C.crbin` resource file, supporting custom LOD levels and multithreaded quad node decoding.
 
 ```bash
