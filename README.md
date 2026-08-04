@@ -1,6 +1,6 @@
 # TotkCaveTool (CLI Application)
 
-`TotkCaveTool` is a standalone command-line application built on top of the [`TotkCave`](../TotkCave) library for inspecting, converting, and batch exporting *Tears of the Kingdom* cave (`cave017`) and Depths terrain (`.quad`) streaming files.
+`TotkCaveTool` is a standalone command-line application built on top of the [`TotkCave`](https://github.com/TKVSC-Team/TotKCave) library for inspecting, converting, and batch exporting *Tears of the Kingdom* cave (`cave017`) and Depths terrain (`.quad`) streaming files.
 
 ---
 
