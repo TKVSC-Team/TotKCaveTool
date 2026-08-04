@@ -47,9 +47,9 @@ public static class Program
         Console.WriteLine("TotkCaveTool (.NET 10.0) - Tears of the Kingdom Cave & Quad Toolkit");
         Console.WriteLine("Usage:");
         Console.WriteLine("  TotkCaveTool info <cave_dir>");
-        Console.WriteLine("  TotkCaveTool export <cave_dir> [-o <out.obj>] [--materials] [--lod <N>] [--clean <N>]");
-        Console.WriteLine("  TotkCaveTool batch <root_dir> [-o <out_dir>] [--materials] [-j <threads>]");
-        Console.WriteLine("  TotkCaveTool depths <crbin_file> [-o <out.obj>]");
+        Console.WriteLine("  TotkCaveTool export <cave_dir> [-o <out.obj>] [--materials] [--mc <path>] [--lod <N>] [--clean <N>] [-j <threads>]");
+        Console.WriteLine("  TotkCaveTool batch <root_dir> [-o <out_dir>] [--materials] [--mc <path>] [--lod <N>] [-j <threads>]");
+        Console.WriteLine("  TotkCaveTool depths <crbin_file> [-o <out.obj>] [--lod <N>] [-j <threads>]");
         Console.WriteLine();
     }
 
@@ -81,8 +81,9 @@ public static class Program
             return 1;
         }
 
+        string? mcTool = GetArgValue(args, "--mc");
         CrBin cr = CrBin.FromFile(crbinPath);
-        CavePageSource pages = new(cr, caveDir);
+        CavePageSource pages = new(cr, caveDir, mcTool: mcTool);
 
         Console.WriteLine($"Cave ID         : 0x{cr.CaveId:x8} ({cr.CaveId})");
         Console.WriteLine($"Path            : {cr.Path}");
@@ -104,7 +105,7 @@ public static class Program
     {
         if (args.Length < 1)
         {
-            Console.WriteLine("Usage: TotkCaveTool export <cave_dir> [-o <out.obj>] [--materials] [--lod <N>] [--clean <N>]");
+            Console.WriteLine("Usage: TotkCaveTool export <cave_dir> [-o <out.obj>] [--materials] [--mc <path>] [--lod <N>] [--clean <N>] [-j <threads>]");
             return 1;
         }
 
@@ -118,17 +119,21 @@ public static class Program
 
         string outObj = GetArgValue(args, "-o") ?? $"{Path.GetFileName(caveDir)}.obj";
         bool withMaterials = args.Contains("--materials");
+        string? mcTool = GetArgValue(args, "--mc");
         int? lod = GetIntArg(args, "--lod");
         float clean = GetFloatArg(args, "--clean") ?? 0.0f;
+        int threads = GetThreadsArg(args);
 
         CrBin cr = CrBin.FromFile(crbinPath);
-        CavePageSource pages = new(cr, caveDir);
+        CavePageSource pages = new(cr, caveDir, mcTool: mcTool);
 
         Console.WriteLine($"[Building] {Path.GetFileName(caveDir)} (LOD {lod ?? cr.NumSubdivisions})...");
         Stopwatch sw = Stopwatch.StartNew();
 
-        CaveMesh mesh = MeshBuilder.BuildMesh(cr, pages, lod, weld: true, clean: clean);
+        Action<int, int> progress = (done, total) => RenderProgressBar("Cave", done, total);
+        CaveMesh mesh = MeshBuilder.BuildMesh(cr, pages, lod, weld: true, clean: clean, maxDegreeOfParallelism: threads, progressCallback: progress);
         sw.Stop();
+        Console.WriteLine();
 
         Console.WriteLine($"Built mesh in {sw.ElapsedMilliseconds} ms: {mesh.Vertices.Count:N0} vertices, {mesh.Faces.Count:N0} faces");
 
@@ -150,13 +155,16 @@ public static class Program
     {
         if (args.Length < 1)
         {
-            Console.WriteLine("Usage: TotkCaveTool batch <root_dir> [-o <out_dir>] [--materials]");
+            Console.WriteLine("Usage: TotkCaveTool batch <root_dir> [-o <out_dir>] [--materials] [--mc <path>] [--lod <N>] [-j <threads>]");
             return 1;
         }
 
         string rootDir = args[0];
         string outDir = GetArgValue(args, "-o") ?? "cave_objs";
         bool withMaterials = args.Contains("--materials");
+        string? mcTool = GetArgValue(args, "--mc");
+        int? lod = GetIntArg(args, "--lod");
+        int threads = GetThreadsArg(args);
 
         var caves = CaveFinder.FindCaves(rootDir).ToList();
         if (caves.Count == 0)
@@ -168,16 +176,20 @@ public static class Program
         Console.WriteLine($"Found {caves.Count} caves under '{rootDir}'. Exporting to '{outDir}'...");
         Directory.CreateDirectory(outDir);
 
+        int maxThreads = threads > 0 ? threads : Environment.ProcessorCount;
+        ParallelOptions parallelOptions = new() { MaxDegreeOfParallelism = maxThreads };
+
         int exported = 0;
-        foreach (var (name, dirPath) in caves)
+        Parallel.ForEach(caves, parallelOptions, cave =>
         {
+            var (name, dirPath) = cave;
             try
             {
                 string crbinPath = Path.Combine(dirPath, "C.crbin");
                 CrBin cr = CrBin.FromFile(crbinPath);
-                CavePageSource pages = new(cr, dirPath);
+                CavePageSource pages = new(cr, dirPath, mcTool: mcTool);
 
-                CaveMesh mesh = MeshBuilder.BuildMesh(cr, pages);
+                CaveMesh mesh = MeshBuilder.BuildMesh(cr, pages, lod: lod);
                 string outFile = Path.Combine(outDir, $"{name}.obj");
 
                 ObjExporter.WriteObj(mesh, outFile, new ObjExportOptions(
@@ -185,18 +197,19 @@ public static class Program
                     IncludeNormals: true,
                     IncludeGroups: withMaterials,
                     IncludeMaterials: withMaterials,
-                    HeaderComment: $"Batch exported {name}"
+                    HeaderComment: $"Batch exported {name} (LOD: {lod ?? cr.NumSubdivisions})"
                 ));
 
-                exported++;
-                Console.WriteLine($"[{exported}/{caves.Count}] Exported {name} -> {outFile}");
+                int currentCount = Interlocked.Increment(ref exported);
+                RenderProgressBar("Batch", currentCount, caves.Count);
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[FAILED] {name}: {ex.Message}");
+                Console.WriteLine($"\n[FAILED] {name}: {ex.Message}");
             }
-        }
+        });
 
+        Console.WriteLine();
         Console.WriteLine($"Batch completed: {exported}/{caves.Count} successfully exported.");
         return 0;
     }
@@ -205,29 +218,48 @@ public static class Program
     {
         if (args.Length < 1)
         {
-            Console.WriteLine("Usage: TotkCaveTool depths <crbin_file> [-o <out.obj>]");
+            Console.WriteLine("Usage: TotkCaveTool depths <crbin_file> [-o <out.obj>] [--lod <N>] [-j <threads> | --threads <N>]");
             return 1;
         }
 
         string crbinPath = args[0];
         string outObj = GetArgValue(args, "-o") ?? "depths.obj";
+        int? lod = GetIntArg(args, "--lod");
+        int threads = GetThreadsArg(args);
 
         QuadResource res = new(crbinPath);
         QuadPageSource pages = new(res);
 
-        Console.WriteLine($"[Building Depths Quad Mesh] {Path.GetFileName(crbinPath)}...");
-        CaveMesh mesh = QuadMeshBuilder.BuildMesh(res, pages);
+        int targetLod = lod ?? res.MaxLod;
+        int activeThreads = threads > 0 ? threads : Environment.ProcessorCount;
 
-        ObjExporter.WriteObj(mesh, outObj, new ObjExportOptions(
-            IncludeColors: false,
-            IncludeNormals: false,
-            IncludeGroups: false,
-            IncludeMaterials: false,
-            HeaderComment: "Depths quad terrain mesh"
-        ));
+        Console.WriteLine($"[Depths Resource] Nodes: {res.NodeCount:N0}, Far LODs: {res.NumFarLodLevels}, Normal LODs: {res.NumNormalLodLevels} (Max LOD: {res.MaxLod})");
+        Console.WriteLine($"[Streaming Depths Quad Mesh] {Path.GetFileName(crbinPath)} (Target LOD: {targetLod}, Worker Threads: {activeThreads})...");
+        Console.Out.Flush();
 
-        Console.WriteLine($"Wrote Depths OBJ ({mesh.Vertices.Count:N0} verts, {mesh.Faces.Count:N0} faces) -> {outObj}");
+        Stopwatch sw = Stopwatch.StartNew();
+
+        Action<int, int, int> progress = (done, verts, total) => RenderProgressBar("Depths", done, total);
+
+        var (totalVerts, totalFaces, totalNodes) = QuadMeshBuilder.ExportObjStreaming(res, pages, outObj, lod: targetLod, weld: true, maxDegreeOfParallelism: activeThreads, progressCallback: progress);
+        sw.Stop();
+        Console.WriteLine();
+
+        FileInfo objInfo = new(outObj);
+        double sizeMB = objInfo.Exists ? objInfo.Length / (1024.0 * 1024.0) : 0.0;
+        Console.WriteLine($"Wrote Depths OBJ ({totalVerts:N0} verts, {totalFaces:N0} faces, {sizeMB:F1} MB) in {sw.ElapsedMilliseconds / 1000.0:F2}s -> {outObj}");
         return 0;
+    }
+
+    private static void RenderProgressBar(string label, int done, int total)
+    {
+        if (total <= 0) return;
+        float percent = (float)done / total * 100.0f;
+        int barWidth = 30;
+        int filled = Math.Min(barWidth, (int)(barWidth * done / total));
+        string bar = new string('█', filled) + new string('░', barWidth - filled);
+        Console.Write(string.Create(CultureInfo.InvariantCulture, $"\r[{label}] [{bar}] {percent,5:F1}% ({done:N0}/{total:N0} nodes)"));
+        Console.Out.Flush();
     }
 
     private static string? GetArgValue(string[] args, string flag)
@@ -246,5 +278,14 @@ public static class Program
     {
         string? val = GetArgValue(args, flag);
         return val != null && float.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out float res) ? res : null;
+    }
+
+    private static int GetThreadsArg(string[] args)
+    {
+        int? jVal = GetIntArg(args, "-j");
+        if (jVal.HasValue) return jVal.Value;
+        int? tVal = GetIntArg(args, "--threads");
+        if (tVal.HasValue) return tVal.Value;
+        return -1;
     }
 }
