@@ -11,7 +11,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\TotkCave\TotkCave.csproj" />
+    <PackageReference Include="TotkCave" Version="1.0.0" />
   </ItemGroup>
 
 </Project>
